@@ -64,4 +64,4 @@ COPY --from=builder /usr/bin/google-maps-scraper /usr/bin/
 
 EXPOSE 4015
 
-ENTRYPOINT ["google-maps-scraper"]
+ENTRYPOINT ["google-maps-scraper", "-addr", ":4015"]
