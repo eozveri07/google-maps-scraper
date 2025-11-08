@@ -79,6 +79,7 @@ type Config struct {
 	Addr                     string
 	DisablePageReuse         bool
 	ExtraReviews             bool
+	ApiBearerToken           string
 }
 
 func ParseConfig() *Config {
@@ -175,6 +176,8 @@ func ParseConfig() *Config {
 	if cfg.AwsAccessKey != "" && cfg.AwsSecretKey != "" && cfg.AwsRegion != "" {
 		cfg.S3Uploader = s3uploader.New(cfg.AwsAccessKey, cfg.AwsSecretKey, cfg.AwsRegion)
 	}
+
+	cfg.ApiBearerToken = os.Getenv("API_BEARER_TOKEN")
 
 	switch {
 	case cfg.AwsLambdaInvoker:

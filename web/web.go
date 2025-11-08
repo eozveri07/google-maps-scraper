@@ -23,15 +23,17 @@ import (
 var static embed.FS
 
 type Server struct {
-	tmpl map[string]*template.Template
-	srv  *http.Server
-	svc  *Service
+	tmpl        map[string]*template.Template
+	srv         *http.Server
+	svc         *Service
+	bearerToken string
 }
 
-func New(svc *Service, addr string) (*Server, error) {
+func New(svc *Service, addr, bearerToken string) (*Server, error) {
 	ans := Server{
-		svc:  svc,
-		tmpl: make(map[string]*template.Template),
+		svc:         svc,
+		tmpl:        make(map[string]*template.Template),
+		bearerToken: bearerToken,
 		srv: &http.Server{
 			Addr:              addr,
 			ReadHeaderTimeout: 10 * time.Second,
@@ -51,23 +53,23 @@ func New(svc *Service, addr string) (*Server, error) {
 	mux := http.NewServeMux()
 
 	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
-	mux.HandleFunc("/scrape", ans.scrape)
-	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/scrape", ans.authMiddleware(ans.scrape))
+	mux.HandleFunc("/download", ans.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		ans.download(w, r)
-	})
-	mux.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/delete", ans.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		ans.delete(w, r)
-	})
-	mux.HandleFunc("/jobs", ans.getJobs)
+	}))
+	mux.HandleFunc("/jobs", ans.authMiddleware(ans.getJobs))
 	mux.HandleFunc("/", ans.index)
 
 	// api routes
 	mux.HandleFunc("/api/docs", ans.redocHandler)
-	mux.HandleFunc("/api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/jobs", ans.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			ans.apiScrape(w, r)
@@ -81,9 +83,9 @@ func New(svc *Service, addr string) (*Server, error) {
 
 			renderJSON(w, http.StatusMethodNotAllowed, ans)
 		}
-	})
+	}))
 
-	mux.HandleFunc("/api/v1/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/jobs/{id}", ans.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		switch r.Method {
@@ -99,9 +101,9 @@ func New(svc *Service, addr string) (*Server, error) {
 
 			renderJSON(w, http.StatusMethodNotAllowed, ans)
 		}
-	})
+	}))
 
-	mux.HandleFunc("/api/v1/jobs/{id}/download", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/jobs/{id}/download", ans.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		r = requestWithID(r)
 
 		if r.Method != http.MethodGet {
@@ -116,7 +118,7 @@ func New(svc *Service, addr string) (*Server, error) {
 		}
 
 		ans.download(w, r)
-	})
+	}))
 
 	handler := securityHeaders(mux)
 	ans.srv.Handler = handler
@@ -636,4 +638,30 @@ func securityHeaders(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.bearerToken != "" {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			const bearerPrefix = "Bearer "
+			if !strings.HasPrefix(authHeader, bearerPrefix) {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			token := strings.TrimPrefix(authHeader, bearerPrefix)
+			if token != s.bearerToken {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
+		next(w, r)
+	}
 }
